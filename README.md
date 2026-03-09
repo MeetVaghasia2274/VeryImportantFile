@@ -2,8 +2,6 @@
 
 A modern, real-time multiplayer Hand Cricket game built with Node.js, Socket.IO, and SQLite. Play against friends in private rooms or challenge a learning AI bot!
 
-![Game Preview](public/images/preview.png) *(Note: Add a screenshot of your game here!)*
-
 ## ✨ Features
 
 - **Real-time Multiplayer**: Powered by Socket.IO for lag-free number picking.
