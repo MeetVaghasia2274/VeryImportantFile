@@ -214,10 +214,10 @@
             <div id="tournament-admin-controls" class="room-controls hidden">
                 <h3>🏆 Tournament Controls</h3>
                 <div class="admin-actions">
-                    <p class="hint-text" id="tournament-hint">Need at least 3 players to start a tournament</p>
+                    <p class="hint-text" id="tournament-hint">Need at least 2 players to start</p>
                     <button class="btn btn-primary btn-full" id="start-tournament-btn" onclick="startTournament()"
                         disabled>
-                        Start Tournament
+                        🚀 Launch Tournament
                     </button>
                 </div>
             </div>
@@ -234,6 +234,70 @@
                     <button class="btn btn-primary" onclick="startRoomMatch()">Start Match ⚔️</button>
                     <button class="btn btn-ghost btn-sm" onclick="deselectOpponent()">Cancel</button>
                 </div>
+            </div>
+        </main>
+    </div>
+
+    <!-- ═══════ TOURNAMENT SCREEN ═══════ -->
+    <div id="tournament-screen" class="screen hidden">
+        <header class="top-bar">
+            <button class="btn btn-ghost btn-sm" onclick="leaveTournamentView()">← Lobby</button>
+            <div class="top-bar-brand">🏆 Tournament</div>
+            <span id="tournament-stage-badge" class="stage-badge"></span>
+        </header>
+
+        <main class="tournament-main">
+            <!-- Bracket -->
+            <section class="bracket-section">
+                <h2 class="section-title">Bracket</h2>
+                <div id="bracket-container" class="bracket-container">
+                    <!-- JS populated -->
+                </div>
+            </section>
+
+            <!-- Upcoming / Prediction Panel -->
+            <section id="prediction-panel" class="prediction-panel hidden">
+                <div class="prediction-card glass-card">
+                    <div class="prediction-vs-header">
+                        <div class="pred-player" id="pred-player1"></div>
+                        <div class="pred-vs">VS</div>
+                        <div class="pred-player" id="pred-player2"></div>
+                    </div>
+
+                    <!-- H2H Stats -->
+                    <div class="h2h-bar-wrap" id="h2h-wrap">
+                        <div class="h2h-label" id="h2h-p1-label"></div>
+                        <div class="h2h-bar">
+                            <div class="h2h-fill" id="h2h-fill"></div>
+                        </div>
+                        <div class="h2h-label" id="h2h-p2-label"></div>
+                    </div>
+                    <p class="h2h-summary" id="h2h-summary"></p>
+
+                    <!-- Prediction Voting -->
+                    <div id="prediction-vote-wrap">
+                        <p class="vote-prompt">🗳️ Who do you think wins?</p>
+                        <div class="vote-btns" id="vote-btns"></div>
+                        <p class="vote-tally" id="vote-tally"></p>
+                    </div>
+
+                    <!-- Admin: launch match -->
+                    <div id="launch-match-wrap" class="hidden">
+                        <button class="btn btn-primary btn-full" id="launch-match-btn"
+                            onclick="launchTournamentMatch()">
+                            ▶ Start Match
+                        </button>
+                    </div>
+                </div>
+            </section>
+
+            <!-- Champion Banner -->
+            <div id="champion-banner" class="champion-banner hidden">
+                <div class="champion-trophy">🏆</div>
+                <h2 class="champion-title">Tournament Champion!</h2>
+                <div class="champion-avatar" id="champion-avatar"></div>
+                <p class="champion-name" id="champion-name"></p>
+                <button class="btn btn-ghost" onclick="leaveTournamentView()">Back to Lobby</button>
             </div>
         </main>
     </div>
