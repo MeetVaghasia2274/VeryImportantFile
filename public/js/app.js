@@ -642,12 +642,12 @@ function updateRoomUI() {
             adminControlsTournament.classList.remove('hidden');
             const btn = document.getElementById('start-tournament-btn');
             const hint = document.getElementById('tournament-hint');
-            if (currentRoom.playerCount >= 3) {
+            if (currentRoom.playerCount >= 2) {
                 btn.disabled = false;
                 hint.textContent = `${currentRoom.playerCount} players ready! Start the tournament.`;
             } else {
                 btn.disabled = true;
-                hint.textContent = `Need at least 3 players (${currentRoom.playerCount}/3)`;
+                hint.textContent = `Need at least 2 players (${currentRoom.playerCount}/2)`;
             }
         }
     } else {
@@ -710,8 +710,11 @@ function kickPlayer(playerId) {
 }
 
 function startTournament() {
-    // Tournament mode placeholder — will be implemented in Phase 2
-    showToast('Tournament mode coming soon! Use 1v1 mode for now.', 'info');
+    socket.emit('start-tournament', (response) => {
+        if (response.error) {
+            showToast(response.error, 'error');
+        }
+    });
 }
 
 function leaveRoom() {
@@ -1218,8 +1221,193 @@ function leaveMatch() {
 }
 
 // ═══════════════════════════════════════════════════════
-// UTILITIES
+// TOURNAMENT
 // ═══════════════════════════════════════════════════════
+function leaveTournamentView() {
+    showScreen('room');
+    updateRoomUI();
+}
+
+function renderBracket(tournament) {
+    const container = document.getElementById('bracket-container');
+    container.innerHTML = '';
+
+    const rounds = {};
+    tournament.matches.forEach(m => {
+        if (!rounds[m.stage]) rounds[m.stage] = [];
+        rounds[m.stage].push(m);
+    });
+
+    const stageOrder = ['quarterfinal', 'semifinal', 'final'];
+    stageOrder.forEach(stage => {
+        if (!rounds[stage]) return;
+
+        const roundDiv = document.createElement('div');
+        roundDiv.className = 'bracket-round';
+        roundDiv.innerHTML = `<div class="bracket-round-label">${stageName(stage)}</div>`;
+
+        rounds[stage].forEach(m => {
+            const matchDiv = document.createElement('div');
+            matchDiv.className = `bracket-match ${m.status === 'live' ? 'is-live' : (m.status === 'done' ? 'is-done' : (m.status === 'prediction' ? 'is-prediction' : ''))}`;
+
+            const isAdmin = currentRoom && currentRoom.admin.id === currentUser.id;
+
+            matchDiv.innerHTML = `
+                <div class="bracket-players">
+                    <div class="bracket-player ${m.winner && m.winner.id === m.player1.id ? 'is-winner' : ''}">
+                        <div class="avatar-xs" style="background:${m.player1.avatarColor || '#64748b'}">${m.player1.displayName.charAt(0)}</div>
+                        <span class="player-name">${m.player1.displayName}</span>
+                    </div>
+                    <div class="bracket-divider">vs</div>
+                    <div class="bracket-player ${m.winner && m.winner.id === m.player2.id ? 'is-winner' : ''}">
+                        <div class="avatar-xs" style="background:${m.player2.avatarColor || '#64748b'}">${m.player2.displayName.charAt(0)}</div>
+                        <span class="player-name">${m.player2.displayName}</span>
+                    </div>
+                </div>
+                <div class="bracket-status status-${m.status}">${m.status.toUpperCase()}</div>
+                ${isAdmin && m.status === 'upcoming' ? '<button class="btn-micro" title="Open Predictions">🗳️</button>' : ''}
+            `;
+
+            if (isAdmin && m.status === 'upcoming') {
+                matchDiv.querySelector('.btn-micro').addEventListener('click', (e) => {
+                    e.stopPropagation();
+                    openPredictions(m.id);
+                });
+            }
+
+            matchDiv.addEventListener('click', () => {
+                if (m.status === 'prediction') {
+                    openPredictionPanel(m, m.id);
+                }
+            });
+
+            roundDiv.appendChild(matchDiv);
+        });
+
+        container.appendChild(roundDiv);
+    });
+}
+
+function openPredictions(bracketMatchId) {
+    socket.emit('open-predictions', { bracketMatchId }, (res) => {
+        if (res.error) showToast(res.error, 'error');
+    });
+}
+
+async function openPredictionPanel(match, bracketMatchId) {
+    activeBracketMatchId = bracketMatchId;
+    const panel = document.getElementById('prediction-panel');
+    panel.classList.remove('hidden');
+
+    const p1 = match.player1;
+    const p2 = match.player2;
+
+    // Fill UI
+    document.getElementById('pred-player1').innerHTML = `
+        <div class="pred-player-avatar" style="background:${p1.avatarColor || '#64748b'}">${p1.displayName.charAt(0)}</div>
+        <span class="pred-player-name">${p1.displayName}</span>
+    `;
+    document.getElementById('pred-player2').innerHTML = `
+        <div class="pred-player-avatar" style="background:${p2.avatarColor || '#64748b'}">${p2.displayName.charAt(0)}</div>
+        <span class="pred-player-name">${p2.displayName}</span>
+    `;
+
+    // Admin controls
+    const isAdmin = currentRoom && currentRoom.admin.id === currentUser.id;
+    document.getElementById('launch-match-wrap').classList.toggle('hidden', !isAdmin);
+
+    // Initial predictions
+    updateVoteTally(currentTournament, bracketMatchId);
+
+    // Vote buttons
+    const voteBtnContainer = document.getElementById('vote-btns');
+    voteBtnContainer.innerHTML = '';
+    [p1, p2].forEach(p => {
+        const btn = document.createElement('button');
+        btn.className = 'vote-btn';
+        if (currentTournament.matches.find(m => m.id === bracketMatchId)?.predictions[currentUser.id] === p.id) {
+            btn.classList.add('voted');
+        }
+        btn.innerHTML = `Win: ${p.displayName}`;
+        btn.onclick = () => submitPrediction(bracketMatchId, p.id);
+        voteBtnContainer.appendChild(btn);
+    });
+
+    // Fetch H2H
+    updateHeadToHeadStats(p1.id, p2.id);
+}
+
+async function updateHeadToHeadStats(p1Id, p2Id) {
+    try {
+        const res = await fetch(`/api/h2h/${p1Id}/${p2Id}`);
+        const stats = await res.json();
+
+        const wrap = document.getElementById('h2h-wrap');
+        const summary = document.getElementById('h2h-summary');
+
+        if (stats.totalMatches === 0) {
+            wrap.classList.add('hidden');
+            summary.textContent = "First time these two meet!";
+        } else {
+            wrap.classList.remove('hidden');
+            const p1Rate = (stats.p1Wins / stats.totalMatches) * 100;
+            document.getElementById('h2h-fill').style.width = `${p1Rate}%`;
+            document.getElementById('h2h-p1-label').textContent = `${stats.p1Wins}W`;
+            document.getElementById('h2h-p2-label').textContent = `${stats.p2Wins}W`;
+            summary.textContent = `${stats.totalMatches} matches played. ${stats.p1TotalRuns} runs vs ${stats.p2TotalRuns} runs.`;
+        }
+    } catch (e) {
+        console.error("H2H error:", e);
+    }
+}
+
+function submitPrediction(bracketMatchId, predictedPlayerId) {
+    socket.emit('submit-prediction', { bracketMatchId, predictedPlayerId }, (res) => {
+        if (res.error) showToast(res.error, 'error');
+    });
+}
+
+function updateVoteTally(tournament, bracketMatchId) {
+    const m = tournament.matches.find(m => m.id === bracketMatchId);
+    if (!m) return;
+
+    const tally = m.predictions || {};
+    const total = Object.keys(tally).length;
+    if (total === 0) {
+        document.getElementById('vote-tally').textContent = 'No votes yet';
+        return;
+    }
+
+    const p1Votes = Object.values(tally).filter(pid => pid === m.player1.id).length;
+    const p1Percent = Math.round((p1Votes / total) * 100);
+    document.getElementById('vote-tally').textContent = `${p1Percent}% favor ${m.player1.displayName} to win.`;
+}
+
+function launchTournamentMatch() {
+    if (!activeBracketMatchId) return;
+    socket.emit('launch-tournament-match', { bracketMatchId: activeBracketMatchId }, (res) => {
+        if (res.error) showToast(res.error, 'error');
+    });
+}
+
+function stageName(stage) {
+    switch (stage) {
+        case 'quarterfinal': return 'Quarter Finals';
+        case 'semifinal': return 'Semi Finals';
+        case 'final': return 'Final';
+        default: return stage.toUpperCase();
+    }
+}
+
+function showChampionBanner(champion) {
+    const banner = document.getElementById('champion-banner');
+    document.getElementById('champion-avatar').style.background = champion.avatarColor || '#fbbf24';
+    document.getElementById('champion-avatar').textContent = champion.displayName.charAt(0);
+    document.getElementById('champion-name').textContent = champion.displayName;
+
+    banner.classList.remove('hidden');
+    spawnConfetti();
+}
 function formatBalls(balls) {
     const overs = Math.floor(balls / 6);
     const remaining = balls % 6;

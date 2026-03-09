@@ -2517,6 +2517,7 @@ body {
     font-weight: 900;
     background: linear-gradient(135deg, var(--accent-gold), #f97316);
     -webkit-background-clip: text;
+    background-clip: text;
     -webkit-text-fill-color: transparent;
 }
 
