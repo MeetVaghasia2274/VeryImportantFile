@@ -14,6 +14,8 @@ let timerInterval = null;
 let timerStartTime = null;
 let roomMode = '1v1';        // '1v1' or 'tournament'
 let isCpuMatch = false;
+let currentTournament = null;         // live bracket state
+let activeBracketMatchId = null;      // which bracket match is in prediction/launch mode
 const TURN_TIME = 8000;
 const CPU_ID = -1;
 
@@ -22,6 +24,7 @@ const screens = {
     auth: document.getElementById('auth-screen'),
     dashboard: document.getElementById('dashboard-screen'),
     room: document.getElementById('room-screen'),
+    tournament: document.getElementById('tournament-screen'),
     game: document.getElementById('game-screen')
 };
 
@@ -259,6 +262,53 @@ function connectSocket() {
 
     socket.on('match-forfeit', (data) => {
         handleMatchForfeit(data);
+    });
+
+    // ─── Tournament Events ───
+    socket.on('tournament-started', (tournament) => {
+        currentTournament = tournament;
+        showScreen('tournament');
+        renderBracket(tournament);
+        document.getElementById('tournament-stage-badge').textContent = stageName(tournament.status);
+        showToast('🏆 Tournament started!', 'success');
+    });
+
+    socket.on('predictions-open', ({ bracketMatchId, match, tournament }) => {
+        currentTournament = tournament;
+        activeBracketMatchId = bracketMatchId;
+        renderBracket(tournament);
+        openPredictionPanel(match, bracketMatchId);
+        showToast('🗳️ Place your prediction!', 'info');
+    });
+
+    socket.on('predictions-updated', ({ bracketMatchId, tournament }) => {
+        currentTournament = tournament;
+        renderBracket(tournament);
+        if (activeBracketMatchId === bracketMatchId) {
+            updateVoteTally(tournament, bracketMatchId);
+        }
+    });
+
+    socket.on('tournament-match-started', ({ bracketMatchId, matchId, bracket }) => {
+        currentTournament = bracket;
+        renderBracket(bracket);
+        document.getElementById('prediction-panel').classList.add('hidden');
+        // Players involved jump to game screen (handled by match-start event)
+    });
+
+    socket.on('tournament-bracket-updated', ({ bracket, nextMatches }) => {
+        currentTournament = bracket;
+        renderBracket(bracket);
+        document.getElementById('tournament-stage-badge').textContent = stageName(bracket.status);
+        if (nextMatches && nextMatches.length > 0) {
+            showToast(`Next up: ${nextMatches[0].player1.displayName} vs ${nextMatches[0].player2.displayName}`, 'info');
+        }
+    });
+
+    socket.on('tournament-complete', ({ champion, bracket }) => {
+        currentTournament = bracket;
+        renderBracket(bracket);
+        showChampionBanner(champion);
     });
 }
 
