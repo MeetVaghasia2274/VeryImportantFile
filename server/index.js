@@ -6,6 +6,7 @@ const path = require('path');
 const db = require('./db');
 const RoomManager = require('./roomManager');
 const gameLogic = require('./gameLogic');
+const tournamentEngine = require('./tournament');
 
 // ─── Setup ───
 const app = express();
@@ -94,6 +95,14 @@ app.get('/api/leaderboard', (req, res) => {
     res.json(leaderboard);
 });
 
+app.get('/api/h2h/:p1/:p2', (req, res) => {
+    const p1Id = parseInt(req.params.p1);
+    const p2Id = parseInt(req.params.p2);
+    if (isNaN(p1Id) || isNaN(p2Id)) return res.status(400).json({ error: 'Invalid player IDs' });
+    const stats = db.getHeadToHeadStats(p1Id, p2Id);
+    res.json(stats);
+});
+
 // ─── Socket.IO ───
 io.use((socket, next) => {
     const token = socket.handshake.auth.token;
@@ -158,6 +167,108 @@ io.on('connection', (socket) => {
                 }
             }
         }
+    });
+
+    // ─── Tournament Socket Events ───
+
+    socket.on('start-tournament', (callback) => {
+        const room = roomManager.getRoomByPlayerId(user.id);
+        if (!room) return callback({ error: 'Not in a room' });
+        if (room.admin.id !== user.id) return callback({ error: 'Only admin can start tournament' });
+        if (room.players.length < 2) return callback({ error: 'Need at least 2 players' });
+
+        const players = room.players.map(p => ({
+            id: p.id, displayName: p.displayName, avatarColor: p.avatarColor, socketId: p.socketId || null
+        }));
+
+        const t = tournamentEngine.createTournament(room.code, user.id, players);
+        const summary = tournamentEngine.getBracketSummary(room.code);
+
+        io.to(`room:${room.code}`).emit('tournament-started', summary);
+        callback({ success: true, tournament: summary });
+    });
+
+    socket.on('get-bracket', (callback) => {
+        const room = roomManager.getRoomByPlayerId(user.id);
+        if (!room) return callback({ error: 'Not in a room' });
+        const summary = tournamentEngine.getBracketSummary(room.code);
+        if (!summary) return callback({ error: 'No active tournament' });
+        callback({ success: true, tournament: summary });
+    });
+
+    socket.on('open-predictions', ({ bracketMatchId }, callback) => {
+        const room = roomManager.getRoomByPlayerId(user.id);
+        if (!room) return callback({ error: 'Not in a room' });
+        if (room.admin.id !== user.id) return callback({ error: 'Admin only' });
+
+        const result = tournamentEngine.openPredictions(room.code, bracketMatchId);
+        if (result.error) return callback({ error: result.error });
+
+        const summary = tournamentEngine.getBracketSummary(room.code);
+        io.to(`room:${room.code}`).emit('predictions-open', { bracketMatchId, match: result.match, tournament: summary });
+        callback({ success: true });
+    });
+
+    socket.on('submit-prediction', ({ bracketMatchId, predictedPlayerId }, callback) => {
+        const room = roomManager.getRoomByPlayerId(user.id);
+        if (!room) return callback({ error: 'Not in a room' });
+
+        const result = tournamentEngine.savePrediction(room.code, bracketMatchId, user.id, predictedPlayerId);
+        if (result.error) return callback({ error: result.error });
+
+        // Broadcast updated prediction tallies
+        const summary = tournamentEngine.getBracketSummary(room.code);
+        io.to(`room:${room.code}`).emit('predictions-updated', { bracketMatchId, tournament: summary });
+        callback({ success: true });
+    });
+
+    socket.on('launch-tournament-match', ({ bracketMatchId }, callback) => {
+        const room = roomManager.getRoomByPlayerId(user.id);
+        if (!room) return callback({ error: 'Not in a room' });
+        if (room.admin.id !== user.id) return callback({ error: 'Admin only' });
+
+        const t = tournamentEngine.getTournament(room.code);
+        if (!t) return callback({ error: 'No active tournament' });
+
+        const bm = t.matches.find(m => m.id === bracketMatchId);
+        if (!bm) return callback({ error: 'Match not found' });
+
+        const p1 = bm.player1;
+        const p2 = bm.player2;
+
+        // Skip if either player is already in a match
+        if (p1.id > 0 && playerMatches.has(p1.id)) return callback({ error: `${p1.displayName} is already in a match` });
+        if (p2.id > 0 && playerMatches.has(p2.id)) return callback({ error: `${p2.displayName} is already in a match` });
+
+        const match = gameLogic.createMatch(p1, p2, 'tournament', room.code);
+        match.tournamentId = t.id;
+        match.tournamentRoomCode = room.code;
+        match.bracketMatchId = bracketMatchId;
+        if (p2.id < 0) match.isCpuMatch = true;
+
+        activeMatches.set(match.id, match);
+        playerMatches.set(p1.id, match.id);
+        playerMatches.set(p2.id, match.id);
+
+        if (p1.id > 0) {
+            const s1 = playerSockets.get(p1.id);
+            if (s1) s1.join(`match:${match.id}`);
+        }
+        if (p2.id > 0) {
+            const s2 = playerSockets.get(p2.id);
+            if (s2) s2.join(`match:${match.id}`);
+        }
+
+        tournamentEngine.startBracketMatch(room.code, bracketMatchId, match.id);
+
+        const summary = gameLogic.getMatchSummary(match);
+        io.to(`match:${match.id}`).emit('match-start', summary);
+
+        // Notify the whole room so spectators can follow
+        const bracketSummary = tournamentEngine.getBracketSummary(room.code);
+        io.to(`room:${room.code}`).emit('tournament-match-started', { bracketMatchId, matchId: match.id, bracket: bracketSummary });
+
+        callback({ success: true, matchId: match.id });
     });
 
     // ─── Room Events ───
@@ -711,6 +822,36 @@ function saveMatchToDB(match, result) {
         }
 
         console.log(`💾 Match saved: ${match.player1.displayName} vs ${match.player2.displayName}`);
+
+        // ─── Advance tournament bracket ───
+        if (match.bracketMatchId && match.tournamentRoomCode) {
+            const advance = tournamentEngine.recordResult(
+                match.tournamentRoomCode,
+                match.bracketMatchId,
+                result.winnerId
+            );
+
+            if (advance.success) {
+                const summary = tournamentEngine.getBracketSummary(match.tournamentRoomCode);
+
+                if (advance.tournamentComplete) {
+                    // Record trophy & notify room
+                    if (advance.champion.id > 0) db.recordTournamentWin(advance.champion.id);
+                    io.to(`room:${match.tournamentRoomCode}`).emit('tournament-complete', {
+                        champion: advance.champion,
+                        bracket: summary
+                    });
+                    tournamentEngine.deleteTournament(match.tournamentRoomCode);
+                } else if (advance.roundComplete) {
+                    io.to(`room:${match.tournamentRoomCode}`).emit('tournament-bracket-updated', {
+                        bracket: summary,
+                        nextMatches: advance.nextMatches
+                    });
+                } else {
+                    io.to(`room:${match.tournamentRoomCode}`).emit('tournament-bracket-updated', { bracket: summary });
+                }
+            }
+        }
     } catch (err) {
         console.error('Error saving match:', err);
     }
