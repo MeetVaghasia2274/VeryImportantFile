@@ -66,12 +66,6 @@ function createInnings() {
         target: null        // Set for 2nd innings
     };
 }
-        totalRuns: 0,
-        wickets: 0,
-        totalBallsFaced: 0,
-        balls: [] // { ballNumber, runs, isOut, batsmanId, bowlerId, batsmanPick, bowlerPick }
-    };
-}
 
 function processTossChoice(match, playerId, choice) {
     if (match.state !== STATE.TOSS_CHOICE) return { error: 'Not in toss choice phase' };
