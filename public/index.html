@@ -198,6 +198,20 @@
                 </button>
             </div>
 
+            <!-- Match Settings -->
+            <div id="room-settings" class="room-settings glass-card">
+                <div class="setting-item">
+                    <label for="setting-wickets">Wickets per innings:</label>
+                    <select id="setting-wickets" onchange="updateRoomSettings()" disabled>
+                        <option value="1">1 Wicket (Classic)</option>
+                        <option value="3">3 Wickets</option>
+                        <option value="5">5 Wickets</option>
+                        <option value="10">10 Wickets</option>
+                    </select>
+                </div>
+            </div>
+
+
             <div class="players-grid" id="players-grid">
                 <!-- Populated dynamically -->
             </div>
