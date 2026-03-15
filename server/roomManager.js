@@ -29,6 +29,9 @@ class RoomManager {
             admin: player,
             players: [player],
             maxPlayers: 8,
+            settings: {
+                wickets: 1
+            },
             status: 'waiting',       // waiting, playing
             currentMatch: null,
             matchQueue: [],           // For room-based 1v1 matches
@@ -139,6 +142,21 @@ class RoomManager {
         return { success: true, cpu: cpuPlayer, code, room };
     }
 
+    updateSettings(adminId, newSettings) {
+        const code = this.playerRooms.get(adminId);
+        if (!code) return { error: 'Not in a room' };
+
+        const room = this.rooms.get(code);
+        if (!room) return { error: 'Room not found' };
+        if (room.admin.id !== adminId) return { error: 'Only admin can change settings' };
+
+        if (newSettings.wickets !== undefined) {
+            room.settings.wickets = Math.max(1, Math.min(10, parseInt(newSettings.wickets) || 1));
+        }
+
+        return { success: true, room };
+    }
+
     removeCpuPlayer(adminId, cpuId) {
         const code = this.playerRooms.get(adminId);
         if (!code) return { error: 'You are not in a room' };
@@ -172,18 +190,24 @@ class RoomManager {
     }
 
     getRoomSummary(room) {
+        if (!room) return null;
         return {
             code: room.code,
-            admin: { id: room.admin.id, displayName: room.admin.displayName, avatarColor: room.admin.avatarColor },
+            admin: {
+                id: room.admin.id,
+                displayName: room.admin.displayName
+            },
             players: room.players.map(p => ({
                 id: p.id,
                 displayName: p.displayName,
                 avatarColor: p.avatarColor,
+                isCpu: !!p.isCpu,
                 isAdmin: p.id === room.admin.id
             })),
-            maxPlayers: room.maxPlayers,
+            settings: room.settings,
             status: room.status,
-            playerCount: room.players.length
+            playerCount: room.players.length,
+            maxPlayers: room.maxPlayers
         };
     }
 }
