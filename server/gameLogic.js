@@ -15,7 +15,8 @@ const STATE = {
     COMPLETED: 'completed'            // Match over
 };
 
-function createMatch(player1, player2, matchType = 'quick', roomCode = null, settings = { wickets: 1 }) {
+function createMatch(player1, player2, matchType = 'quick', roomCode = null, settings = { wickets: 1, ballsLimit: TOTAL_BALLS }) {
+    if (!settings.ballsLimit) settings.ballsLimit = TOTAL_BALLS;
     return {
         id: uuidv4(),
         matchType,
@@ -241,7 +242,7 @@ function resolveBall(match) {
 
     if (innings.wickets >= (match.settings.wickets || 1)) {
         inningsComplete = true;
-    } else if (innings.totalBallsFaced >= TOTAL_BALLS) {
+    } else if (innings.totalBallsFaced >= match.settings.ballsLimit) {
         inningsComplete = true;
     }
 
@@ -311,7 +312,7 @@ function resolveBall(match) {
         currentBalls: innings.totalBallsFaced,
         currentOver: `${innings.oversCompleted}.${innings.ballsInCurrentOver}`,
         target: innings.target,
-        remainingBalls: TOTAL_BALLS - innings.totalBallsFaced
+        remainingBalls: match.settings.ballsLimit - innings.totalBallsFaced
     };
 }
 
@@ -371,6 +372,31 @@ function startSecondInnings(match) {
     return { success: true };
 }
 
+function initSuperOver(match) {
+    // Both players get 1 over (6 balls), max 2 wickets.
+    // The player who batted second, bats first in the super over.
+    match.settings.ballsLimit = 6;
+    match.settings.wickets = 2;
+    match.isTie = false;
+    match.winner = null;
+
+    match.innings = [
+        createInnings(),
+        createInnings()
+    ];
+    match.currentInnings = 0;
+    
+    // Swap roles for the start of super over (the previous second innings batsman goes first)
+    // Wait, the match.batsman is currently the one who batted in the 2nd innings. 
+    // Wait, no, at the end of the 2nd innings, batsman/bowler are still the 2nd innings ones.
+    // So if we just leave them, they bat first in the super over! Perfect.
+    match.innings[0].batsmanId = match.batsman.id;
+    match.innings[0].bowlerId = match.bowler.id;
+
+    match.state = STATE.PLAYING;
+    return { success: true, match };
+}
+
 function getMatchSummary(match) {
     const inn1 = match.innings[0];
     const inn2 = match.innings[1];
@@ -423,6 +449,7 @@ module.exports = {
     processBatBowlChoice,
     processPlayerPick,
     startSecondInnings,
+    initSuperOver,
     getMatchSummary,
     calculateResult
 };

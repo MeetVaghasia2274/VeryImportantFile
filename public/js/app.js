@@ -10,6 +10,7 @@ let currentRoom = null;
 let currentMatch = null;
 let selectedOpponentId = null;
 let myRole = null;           // 'batsman' or 'bowler'
+let isSpectator = false;
 let timerInterval = null;
 let timerStartTime = null;
 let roomMode = '1v1';        // '1v1' or 'tournament'
@@ -240,6 +241,29 @@ function connectSocket() {
         handleInningsStart(data);
     });
 
+    socket.on('super-over-start', (matchData) => {
+        currentMatch = matchData;
+        showToast('🔥 MATCH TIED! SUPER OVER INITIATED! 🔥', 'warning');
+        
+        // Short delay to let the result notification pass
+        setTimeout(() => {
+            // Re-init partial game UI without toss because Super Over skips toss
+            hideAllPhases();
+            document.getElementById('innings-label').textContent = 'Super Over';
+            
+            // Wait for server to send 'innings-start' via processSuperOver,
+            // Actually the server already sets state to PLAYING but we need to tell clients to prepare for it.
+            // When Super Over starts, we need to know who is batting. It's in the matchData.
+            const inn1 = matchData.innings1;
+            handleInningsStart({
+                batsmanId: inn1.batsmanId,
+                batsmanName: inn1.batsmanId === matchData.player1.id ? matchData.player1.displayName : matchData.player2.displayName,
+                innings: 1,
+                target: null
+            });
+        }, 3000);
+    });
+
     socket.on('ball-result', (data) => {
         handleBallResult(data);
     });
@@ -293,7 +317,21 @@ function connectSocket() {
         currentTournament = bracket;
         renderBracket(bracket);
         document.getElementById('prediction-panel').classList.add('hidden');
-        // Players involved jump to game screen (handled by match-start event)
+        
+        // Auto-spectate if not playing
+        if (currentMatch && currentMatch.id === matchId) return; // already joined via match-start
+
+        socket.emit('spectate-match', { matchId }, (res) => {
+            if (res.success) {
+                currentMatch = res.match;
+                isCpuMatch = currentMatch.player2.id === CPU_ID;
+                hideModals();
+                showScreen('game');
+                initGameUI(res.match);
+            } else {
+                showToast(res.error, 'error');
+            }
+        });
     });
 
     socket.on('tournament-bracket-updated', ({ bracket, nextMatches }) => {
@@ -626,6 +664,11 @@ function updateRoomUI() {
         adminMgmt.classList.add('hidden');
     }
 
+    // Sync Settings UI
+    const wicketsSelect = document.getElementById('setting-wickets');
+    wicketsSelect.value = currentRoom.settings.wickets.toString();
+    wicketsSelect.disabled = !isAdmin;
+
     // Show/hide controls based on mode and admin status
     const adminControls1v1 = document.getElementById('room-admin-controls');
     const adminControlsTournament = document.getElementById('tournament-admin-controls');
@@ -642,17 +685,23 @@ function updateRoomUI() {
             adminControlsTournament.classList.remove('hidden');
             const btn = document.getElementById('start-tournament-btn');
             const hint = document.getElementById('tournament-hint');
-            if (currentRoom.playerCount >= 2) {
+            if (currentRoom.playerCount >= 4) {
                 btn.disabled = false;
                 hint.textContent = `${currentRoom.playerCount} players ready! Start the tournament.`;
             } else {
                 btn.disabled = true;
-                hint.textContent = `Need at least 2 players (${currentRoom.playerCount}/2)`;
+                hint.textContent = `Need at least 4 players (${currentRoom.playerCount}/4)`;
             }
         }
     } else {
         waitingMsg.classList.remove('hidden');
     }
+}
+
+function updateRoomSettings() {
+    if (!currentRoom || currentRoom.admin.id !== currentUser.id) return;
+    const wickets = document.getElementById('setting-wickets').value;
+    socket.emit('update-room-settings', { wickets });
 }
 
 function selectOpponent(player) {
@@ -740,6 +789,11 @@ function copyRoomCode() {
 function initGameUI(match) {
     currentMatch = match;
     myRole = null;
+    isSpectator = (match.player1.id !== currentUser.id && match.player2.id !== currentUser.id);
+
+    if (isSpectator) {
+        showToast('You are spectating this match 👀', 'info');
+    }
 
     // Player headers
     const p1 = match.player1;
@@ -767,15 +821,38 @@ function hideAllPhases() {
 // ═══════════════════════════════════════════════════════
 // GAME — TOSS
 // ═══════════════════════════════════════════════════════
+function handlePlayPhase(data) {
+    hideAllPhases();
+    const phase = document.getElementById('playing-phase'); // Corrected to 'playing-phase'
+    phase.classList.remove('hidden');
+    
+    if (isSpectator) {
+        disableNumberPicker();
+        document.getElementById('pick-waiting-indicator').classList.remove('hidden');
+        document.getElementById('pick-waiting-indicator').innerHTML = '<div class="spinner"></div> Spectating match...';
+    } else {
+        enableNumberPicker(); // Changed from resetNumberPicker() to enableNumberPicker()
+        startTimer();
+    }
+}
+
 function showTossPhase() {
     hideAllPhases();
     const phase = document.getElementById('toss-phase');
     phase.classList.remove('hidden');
 
     // Reset toss UI
-    document.getElementById('toss-choice-btns').classList.remove('hidden');
-    document.getElementById('toss-number-btns').classList.add('hidden');
-    document.getElementById('toss-waiting').classList.add('hidden');
+    if (isSpectator) {
+        document.getElementById('toss-instruction').textContent = "Spectating toss...";
+        document.getElementById('toss-choice-btns').classList.add('hidden');
+        document.getElementById('toss-number-btns').classList.add('hidden');
+        document.getElementById('toss-waiting').classList.add('hidden');
+    } else {
+        document.getElementById('toss-instruction').textContent = "Call the Toss:";
+        document.getElementById('toss-choice-btns').classList.remove('hidden');
+        document.getElementById('toss-number-btns').classList.add('hidden');
+        document.getElementById('toss-waiting').classList.add('hidden');
+    }
     document.getElementById('toss-result-display').classList.add('hidden');
     document.getElementById('toss-instruction').textContent = 'Choose Odd or Even';
 }
@@ -789,6 +866,11 @@ function pickTossChoice(choice) {
 }
 
 function handleTossChoices(data) {
+    if (isSpectator) {
+        document.getElementById('toss-instruction').textContent = "Spectating number pick...";
+        return;
+    }
+
     const myChoice = currentUser.id === currentMatch.player1.id
         ? data.player1Choice : data.player2Choice;
 
@@ -816,7 +898,7 @@ function handleTossResult(data) {
     document.getElementById('toss-choice-btns').classList.add('hidden');
 
     const resultDisplay = document.getElementById('toss-result-display');
-    const isWinner = data.tossWinnerId === currentUser.id;
+    const isWinner = isSpectator ? false : data.tossWinnerId === currentUser.id;
     const winnerName = data.tossWinner === 'player1'
         ? currentMatch.player1.displayName
         : currentMatch.player2.displayName;
@@ -909,7 +991,10 @@ function handleInningsStart(data) {
 
     // Update role badge
     const roleBadge = document.getElementById('your-role');
-    if (myRole === 'batsman') {
+    if (isSpectator) {
+        roleBadge.textContent = 'SPECTATING 👁️';
+        roleBadge.className = 'role-badge spectator';
+    } else if (myRole === 'batsman') {
         roleBadge.textContent = 'You are BATTING 🏏';
         roleBadge.className = 'role-badge batting';
     } else {
@@ -923,9 +1008,15 @@ function handleInningsStart(data) {
     // Show playing phase
     document.getElementById('playing-phase').classList.remove('hidden');
 
-    // Enable number buttons
-    enableNumberPicker();
-    startTimer();
+    // Handle number buttons for players vs spectators
+    if (isSpectator) {
+        disableNumberPicker();
+        document.getElementById('pick-waiting-indicator').classList.remove('hidden');
+        document.getElementById('pick-waiting-indicator').innerHTML = '<div class="spinner"></div> Spectating match...';
+    } else {
+        enableNumberPicker();
+        startTimer();
+    }
 }
 
 function enableNumberPicker() {
@@ -1033,7 +1124,7 @@ function handleBallResult(data) {
         addBallToLog(ball);
 
         // If innings/match not complete, re-enable picker
-        if (!data.inningsComplete && !data.matchComplete) {
+        if (!data.inningsComplete && !data.matchComplete && !isSpectator) {
             enableNumberPicker();
             startTimer();
         }
@@ -1054,8 +1145,15 @@ function showBallResultPopup(ball) {
         outcomeText = 'FOUR! 💥';
     }
 
-    const batsmanLabel = myRole === 'batsman' ? 'You' : (isCpuMatch ? 'CPU' : 'Opponent');
-    const bowlerLabel = myRole === 'bowler' ? 'You' : (isCpuMatch ? 'CPU' : 'Opponent');
+    let batsmanLabel = myRole === 'batsman' ? 'You' : (isCpuMatch ? 'CPU' : 'Opponent');
+    let bowlerLabel = myRole === 'bowler' ? 'You' : (isCpuMatch ? 'CPU' : 'Opponent');
+
+    if (isSpectator) {
+        batsmanLabel = currentMatch.player1.id === currentMatch.innings[currentMatch.currentInnings].batsmanId 
+            ? currentMatch.player1.displayName : currentMatch.player2.displayName;
+        bowlerLabel = currentMatch.player1.id === currentMatch.innings[currentMatch.currentInnings].bowlerId 
+            ? currentMatch.player1.displayName : currentMatch.player2.displayName;
+    }
 
     content.innerHTML = `
     <div class="result-hands">

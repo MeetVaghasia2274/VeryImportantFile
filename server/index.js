@@ -240,7 +240,13 @@ io.on('connection', (socket) => {
         if (p1.id > 0 && playerMatches.has(p1.id)) return callback({ error: `${p1.displayName} is already in a match` });
         if (p2.id > 0 && playerMatches.has(p2.id)) return callback({ error: `${p2.displayName} is already in a match` });
 
-        const match = gameLogic.createMatch(p1, p2, 'tournament', room.code);
+        const match = gameLogic.createMatch(
+            p1, 
+            p2, 
+            'tournament', 
+            room.code, 
+            room.settings
+        );
         match.tournamentId = t.id;
         match.tournamentRoomCode = room.code;
         match.bracketMatchId = bracketMatchId;
@@ -270,6 +276,17 @@ io.on('connection', (socket) => {
 
         callback({ success: true, matchId: match.id });
     });
+
+    socket.on('spectate-match', ({ matchId }, callback) => {
+        const match = activeMatches.get(matchId);
+        if (!match) return callback({ error: 'Match not found or already ended' });
+
+        socket.join(`match:${match.id}`);
+        // Send current match state to new spectator
+        const summary = gameLogic.getMatchSummary(match);
+        callback({ success: true, match: summary });
+    });
+
 
     // ─── Room Events ───
     socket.on('create-room', (callback) => {
@@ -368,7 +385,8 @@ io.on('connection', (socket) => {
             { id: user.id, displayName: user.displayName, avatarColor: user.avatarColor, socketId: socket.id },
             { id: opponent.id, displayName: opponent.displayName, avatarColor: opponent.avatarColor, socketId: opponent.socketId },
             'room',
-            room.code
+            room.code,
+            room.settings
         );
 
         if (opponent.id < 0) {
@@ -743,11 +761,26 @@ function handleBallResult(matchId, match, result) {
     }
 
     if (result.matchComplete) {
-        io.to(`match:${matchId}`).emit('match-end', result.result);
+        if (result.result.isTie) {
+            // Initiate Super Over
+            gameLogic.initSuperOver(match);
+            
+            // Notify clients to reset their UI for Super Over
+            io.to(`match:${matchId}`).emit('super-over-start', gameLogic.getMatchSummary(match));
+            
+            // Re-trigger CPU turn if needed
+            if (match.isCpuMatch && match.batsman.id === CPU_ID) {
+                setTimeout(() => doCpuTurn(match.id, match, 'bat'), 2000);
+            } else if (match.isCpuMatch && match.bowler.id === CPU_ID) {
+                setTimeout(() => doCpuTurn(match.id, match, 'bowl'), 2000);
+            }
+        } else {
+            io.to(`match:${matchId}`).emit('match-end', result.result);
 
-        // Save to database
-        saveMatchToDB(match, result.result);
-        cleanupMatch(matchId);
+            // Save to database
+            saveMatchToDB(match, result.result);
+            cleanupMatch(matchId);
+        }
     }
 }
 
