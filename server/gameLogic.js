@@ -15,11 +15,12 @@ const STATE = {
     COMPLETED: 'completed'            // Match over
 };
 
-function createMatch(player1, player2, matchType = 'quick', roomCode = null) {
+function createMatch(player1, player2, matchType = 'quick', roomCode = null, settings = { wickets: 1 }) {
     return {
         id: uuidv4(),
         matchType,
         roomCode,
+        settings,
         player1: { ...player1, ready: false },
         player2: { ...player2, ready: false },
         state: STATE.TOSS_CHOICE,
@@ -63,6 +64,12 @@ function createInnings() {
         totalBallsFaced: 0,
         isComplete: false,
         target: null        // Set for 2nd innings
+    };
+}
+        totalRuns: 0,
+        wickets: 0,
+        totalBallsFaced: 0,
+        balls: [] // { ballNumber, runs, isOut, batsmanId, bowlerId, batsmanPick, bowlerPick }
     };
 }
 
