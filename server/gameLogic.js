@@ -239,7 +239,7 @@ function resolveBall(match) {
     let inningsComplete = false;
     let chaseResult = null;
 
-    if (isWicket) {
+    if (innings.wickets >= (match.settings.wickets || 1)) {
         inningsComplete = true;
     } else if (innings.totalBallsFaced >= TOTAL_BALLS) {
         inningsComplete = true;
@@ -326,8 +326,9 @@ function calculateResult(match) {
     if (inn2.totalRuns > inn1.totalRuns) {
         // Chaser wins
         winner = match.innings[1].batsmanId;
-        const wicketsRemaining = 1 - inn2.wickets;
-        margin = `by ${wicketsRemaining} wicket${wicketsRemaining > 1 ? 's' : ''}`;
+        const maxWickets = match.settings.wickets || 1;
+        const wicketsRemaining = maxWickets - inn2.wickets;
+        margin = `by ${wicketsRemaining} wicket${wicketsRemaining !== 1 ? 's' : ''}`;
     } else if (inn1.totalRuns > inn2.totalRuns) {
         // First batsman wins
         winner = match.innings[0].batsmanId;
