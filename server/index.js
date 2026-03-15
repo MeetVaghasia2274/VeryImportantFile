@@ -343,6 +343,14 @@ io.on('connection', (socket) => {
         callback({ success: true });
     });
 
+    socket.on('update-room-settings', (newSettings, callback) => {
+        const result = roomManager.updateSettings(user.id, newSettings);
+        if (result.error) return callback({ error: result.error });
+
+        io.to(`room:${result.code}`).emit('room-updated', roomManager.getRoomSummary(result.room));
+        if (callback) callback({ success: true });
+    });
+
     // ─── Start Match in Room (1v1) ───
     socket.on('start-room-match', ({ opponentId }, callback) => {
         const room = roomManager.getRoomByPlayerId(user.id);
